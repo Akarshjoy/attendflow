@@ -1,0 +1,19 @@
+AttendFlow local validation — 16 October 2026
+
+Python tests: 54 passed in 7.15 seconds.
+Python version used locally: 3.12.14 (deployment runtime: 3.14).
+JavaScript syntax check: passed.
+Frontend JSDOM smoke checks: passed with Node 24.19.0 / jsdom 30.1.3.
+Generated SAM template cfn-lint: passed.
+Official SAM translation: passed; 52 CloudFormation resources.
+Transformed CloudFormation template cfn-lint: passed.
+Explicit runtime IAM roles: verified; no all-queues SAM-managed policy injected.
+Cost calculator: 6,000 captures / 12,000 analysis operations / $12.001 recurring Rekognition subtotal.
+
+Not tested here: deployment into your AWS account; real face recognition accuracy;
+real camera/browser rendering; live CORS; invitation delivery; cloud latency;
+actual scheduled events or cleanup alarms. Run the live acceptance guide.
+
+Tests use Moto for storage and transactions and stub ML responses. These results
+are not a claim of biometric accuracy, liveness protection or live AWS success.
+Rerun tests with your installed Python 3.14 before deployment.

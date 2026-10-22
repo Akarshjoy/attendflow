@@ -1,0 +1,2052 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Transform": "AWS::Serverless-2016-10-31",
+  "Description": "AttendFlow consent-based attendance demonstration",
+  "Parameters": {
+    "AdminEmail": {
+      "Type": "String",
+      "Description": "Inbox for operational SNS alerts"
+    },
+    "BusinessTimezone": {
+      "Type": "String",
+      "Default": "Asia/Kolkata",
+      "AllowedValues": [
+        "Asia/Kolkata",
+        "UTC",
+        "America/New_York",
+        "Europe/London"
+      ]
+    }
+  },
+  "Resources": {
+    "Employees": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "employee_id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "employee_id",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Attendance": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "employee_id",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "date",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "employee_id",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "date",
+            "KeyType": "RANGE"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Sessions": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "session_id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "session_id",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "ttl",
+          "Enabled": true
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Config": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "config_id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "config_id",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Audit": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "event_id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "event_id",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Collection": {
+      "Type": "AWS::Rekognition::Collection",
+      "Properties": {
+        "CollectionId": {
+          "Fn::Sub": "${AWS::StackName}-employees"
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "UploadQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "VisibilityTimeout": 360,
+        "MessageRetentionPeriod": 86400,
+        "SqsManagedSseEnabled": true,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "DeadLetters",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 4
+        }
+      }
+    },
+    "QueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "UploadQueue"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "s3.amazonaws.com"
+              },
+              "Action": "sqs:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              },
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AWS::StackName}-captures-${AWS::AccountId}-${AWS::Region}"
+                  }
+                },
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Web": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Reports": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "OldReportVersions",
+              "Status": "Enabled",
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 30
+              }
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "OAC": {
+      "Type": "AWS::CloudFront::OriginAccessControl",
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-web"
+          },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      }
+    },
+    "Headers": {
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy",
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-headers"
+          },
+          "SecurityHeadersConfig": {
+            "ContentTypeOptions": {
+              "Override": true
+            },
+            "FrameOptions": {
+              "FrameOption": "DENY",
+              "Override": true
+            },
+            "ReferrerPolicy": {
+              "ReferrerPolicy": "no-referrer",
+              "Override": true
+            },
+            "StrictTransportSecurity": {
+              "AccessControlMaxAgeSec": 31536000,
+              "IncludeSubdomains": true,
+              "Override": true
+            }
+          },
+          "CustomHeadersConfig": {
+            "Items": [
+              {
+                "Header": "Permissions-Policy",
+                "Value": "camera=(self), microphone=()",
+                "Override": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "CDN": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "DefaultRootObject": "index.html",
+          "HttpVersion": "http2",
+          "PriceClass": "PriceClass_100",
+          "Origins": [
+            {
+              "Id": "web",
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "Web",
+                  "RegionalDomainName"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              },
+              "OriginAccessControlId": {
+                "Ref": "OAC"
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "web",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "Compress": true,
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+            "ResponseHeadersPolicyId": {
+              "Ref": "Headers"
+            }
+          },
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          }
+        }
+      }
+    },
+    "Raw": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "BucketName": {
+          "Fn::Sub": "${AWS::StackName}-captures-${AWS::AccountId}-${AWS::Region}"
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedOrigins": [
+                {
+                  "Fn::Sub": "https://${CDN.DomainName}"
+                }
+              ],
+              "AllowedMethods": [
+                "POST"
+              ],
+              "AllowedHeaders": [
+                "*"
+              ],
+              "MaxAge": 300
+            }
+          ]
+        },
+        "NotificationConfiguration": {
+          "QueueConfigurations": [
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Queue": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              },
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    {
+                      "Name": "prefix",
+                      "Value": "raw/"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "RawFallback",
+              "Prefix": "raw/",
+              "Status": "Enabled",
+              "ExpirationInDays": 1,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 1
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        }
+      },
+      "DependsOn": "QueuePolicy",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RawPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Raw"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Raw",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Raw.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ReportsPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Reports"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Reports",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Reports.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "WebPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Web"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Web",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Web.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::Sub": "${Web.Arn}/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CDN}"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Pool": {
+      "Type": "AWS::Cognito::UserPool",
+      "Properties": {
+        "UserPoolName": {
+          "Fn::Sub": "${AWS::StackName}-users"
+        },
+        "AdminCreateUserConfig": {
+          "AllowAdminCreateUserOnly": true
+        },
+        "UsernameConfiguration": {
+          "CaseSensitive": false
+        },
+        "AutoVerifiedAttributes": [
+          "email"
+        ],
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 12,
+            "RequireLowercase": true,
+            "RequireUppercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": true,
+            "TemporaryPasswordValidityDays": 7
+          }
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Client": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "Pool"
+        },
+        "GenerateSecret": false,
+        "ExplicitAuthFlows": [
+          "ALLOW_USER_PASSWORD_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH"
+        ],
+        "PreventUserExistenceErrors": "ENABLED",
+        "EnableTokenRevocation": true,
+        "IdTokenValidity": 1,
+        "AccessTokenValidity": 1,
+        "RefreshTokenValidity": 1,
+        "TokenValidityUnits": {
+          "IdToken": "hours",
+          "AccessToken": "hours",
+          "RefreshToken": "days"
+        }
+      }
+    },
+    "AdminGroup": {
+      "Type": "AWS::Cognito::UserPoolGroup",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "Pool"
+        },
+        "GroupName": "Admin"
+      }
+    },
+    "KioskGroup": {
+      "Type": "AWS::Cognito::UserPoolGroup",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "Pool"
+        },
+        "GroupName": "Kiosk"
+      }
+    },
+    "Api": {
+      "Type": "AWS::Serverless::Api",
+      "Properties": {
+        "StageName": "prod",
+        "EndpointConfiguration": {
+          "Type": "REGIONAL"
+        },
+        "Cors": {
+          "AllowOrigin": {
+            "Fn::Sub": "'https://${CDN.DomainName}'"
+          },
+          "AllowMethods": "'GET,POST,OPTIONS'",
+          "AllowHeaders": "'Authorization,Content-Type'"
+        },
+        "Auth": {
+          "DefaultAuthorizer": "Login",
+          "AddDefaultAuthorizerToCorsPreflight": false,
+          "Authorizers": {
+            "Login": {
+              "UserPoolArn": {
+                "Fn::GetAtt": [
+                  "Pool",
+                  "Arn"
+                ]
+              }
+            }
+          }
+        },
+        "MethodSettings": [
+          {
+            "ResourcePath": "/*",
+            "HttpMethod": "*",
+            "ThrottlingRateLimit": 10,
+            "ThrottlingBurstLimit": 20
+          }
+        ],
+        "GatewayResponses": {
+          "DEFAULT_4XX": {
+            "ResponseParameters": {
+              "Headers": {
+                "Access-Control-Allow-Origin": {
+                  "Fn::Sub": "'https://${CDN.DomainName}'"
+                }
+              }
+            }
+          },
+          "DEFAULT_5XX": {
+            "ResponseParameters": {
+              "Headers": {
+                "Access-Control-Allow-Origin": {
+                  "Fn::Sub": "'https://${CDN.DomainName}'"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ReportLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-Report"
+        },
+        "RetentionInDays": 14
+      }
+    },
+    "ReportRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "runtime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:Scan"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Employees",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Config",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Attendance",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Reports.Arn}/reports/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-Report:*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:SendMessage"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "DeadLetters",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Report": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-Report"
+        },
+        "CodeUri": "backend/",
+        "Handler": "app.report",
+        "Runtime": "python3.14",
+        "Architectures": [
+          "x86_64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 120,
+        "Role": {
+          "Fn::GetAtt": [
+            "ReportRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "EMPLOYEES_TABLE": {
+              "Ref": "Employees"
+            },
+            "ATTENDANCE_TABLE": {
+              "Ref": "Attendance"
+            },
+            "SESSIONS_TABLE": {
+              "Ref": "Sessions"
+            },
+            "CONFIG_TABLE": {
+              "Ref": "Config"
+            },
+            "AUDIT_TABLE": {
+              "Ref": "Audit"
+            },
+            "CLIENT_ID": {
+              "Ref": "Client"
+            },
+            "RAW_BUCKET": {
+              "Ref": "Raw"
+            },
+            "REPORT_BUCKET": {
+              "Ref": "Reports"
+            },
+            "COLLECTION_ID": {
+              "Ref": "Collection"
+            },
+            "BUSINESS_TZ": {
+              "Ref": "BusinessTimezone"
+            },
+            "PORTAL_URL": {
+              "Fn::Sub": "https://${CDN.DomainName}"
+            }
+          }
+        }
+      },
+      "DependsOn": "ReportLogs"
+    },
+    "ApiFunctionLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-ApiFunction"
+        },
+        "RetentionInDays": 14
+      }
+    },
+    "ApiFunctionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "runtime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:Scan",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Employees",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Attendance",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Sessions",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "Config",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Audit",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Raw.Arn}/raw/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Reports.Arn}/reports/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Reports",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "s3:prefix": [
+                        "reports/*"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "rekognition:ListFaces",
+                    "rekognition:DeleteFaces"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${Collection}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:InvokeFunction"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Report",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-ApiFunction:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ApiFunction": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-ApiFunction"
+        },
+        "CodeUri": "backend/",
+        "Handler": "app.api",
+        "Runtime": "python3.14",
+        "Architectures": [
+          "x86_64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 29,
+        "Role": {
+          "Fn::GetAtt": [
+            "ApiFunctionRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "EMPLOYEES_TABLE": {
+              "Ref": "Employees"
+            },
+            "ATTENDANCE_TABLE": {
+              "Ref": "Attendance"
+            },
+            "SESSIONS_TABLE": {
+              "Ref": "Sessions"
+            },
+            "CONFIG_TABLE": {
+              "Ref": "Config"
+            },
+            "AUDIT_TABLE": {
+              "Ref": "Audit"
+            },
+            "CLIENT_ID": {
+              "Ref": "Client"
+            },
+            "RAW_BUCKET": {
+              "Ref": "Raw"
+            },
+            "REPORT_BUCKET": {
+              "Ref": "Reports"
+            },
+            "COLLECTION_ID": {
+              "Ref": "Collection"
+            },
+            "BUSINESS_TZ": {
+              "Ref": "BusinessTimezone"
+            },
+            "PORTAL_URL": {
+              "Fn::Sub": "https://${CDN.DomainName}"
+            },
+            "REPORT_FUNCTION": {
+              "Ref": "Report"
+            }
+          }
+        },
+        "Events": {
+          "Proxy": {
+            "Type": "Api",
+            "Properties": {
+              "RestApiId": {
+                "Ref": "Api"
+              },
+              "Path": "/{proxy+}",
+              "Method": "ANY"
+            }
+          }
+        }
+      },
+      "DependsOn": "ApiFunctionLogs"
+    },
+    "RecognitionLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-Recognition"
+        },
+        "RetentionInDays": 14
+      }
+    },
+    "RecognitionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "runtime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:ConditionCheckItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Employees",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Attendance",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Sessions",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Config",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Audit",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObjectVersion",
+                    "s3:DeleteObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Raw.Arn}/raw/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "UploadQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "rekognition:DetectFaces"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "rekognition:SearchFacesByImage",
+                    "rekognition:IndexFaces"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${Collection}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-Recognition:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Recognition": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-Recognition"
+        },
+        "CodeUri": "backend/",
+        "Handler": "app.ingest",
+        "Runtime": "python3.14",
+        "Architectures": [
+          "x86_64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 60,
+        "Role": {
+          "Fn::GetAtt": [
+            "RecognitionRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "EMPLOYEES_TABLE": {
+              "Ref": "Employees"
+            },
+            "ATTENDANCE_TABLE": {
+              "Ref": "Attendance"
+            },
+            "SESSIONS_TABLE": {
+              "Ref": "Sessions"
+            },
+            "CONFIG_TABLE": {
+              "Ref": "Config"
+            },
+            "AUDIT_TABLE": {
+              "Ref": "Audit"
+            },
+            "CLIENT_ID": {
+              "Ref": "Client"
+            },
+            "RAW_BUCKET": {
+              "Ref": "Raw"
+            },
+            "REPORT_BUCKET": {
+              "Ref": "Reports"
+            },
+            "COLLECTION_ID": {
+              "Ref": "Collection"
+            },
+            "BUSINESS_TZ": {
+              "Ref": "BusinessTimezone"
+            },
+            "PORTAL_URL": {
+              "Fn::Sub": "https://${CDN.DomainName}"
+            }
+          }
+        },
+        "Events": {
+          "Uploads": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ]
+            }
+          }
+        }
+      },
+      "DependsOn": "RecognitionLogs"
+    },
+    "CleanupLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-Cleanup"
+        },
+        "RetentionInDays": 14
+      }
+    },
+    "CleanupRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "runtime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:Scan",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Employees",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:Scan",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Sessions",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:DeleteItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Config",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucketVersions"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Raw",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "s3:prefix": [
+                        "raw/*"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:DeleteObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Raw.Arn}/raw/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "rekognition:ListFaces",
+                    "rekognition:DeleteFaces"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${Collection}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-Cleanup:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Cleanup": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-Cleanup"
+        },
+        "CodeUri": "backend/",
+        "Handler": "app.cleanup",
+        "Runtime": "python3.14",
+        "Architectures": [
+          "x86_64"
+        ],
+        "MemorySize": 512,
+        "Timeout": 120,
+        "Role": {
+          "Fn::GetAtt": [
+            "CleanupRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "EMPLOYEES_TABLE": {
+              "Ref": "Employees"
+            },
+            "ATTENDANCE_TABLE": {
+              "Ref": "Attendance"
+            },
+            "SESSIONS_TABLE": {
+              "Ref": "Sessions"
+            },
+            "CONFIG_TABLE": {
+              "Ref": "Config"
+            },
+            "AUDIT_TABLE": {
+              "Ref": "Audit"
+            },
+            "CLIENT_ID": {
+              "Ref": "Client"
+            },
+            "RAW_BUCKET": {
+              "Ref": "Raw"
+            },
+            "REPORT_BUCKET": {
+              "Ref": "Reports"
+            },
+            "COLLECTION_ID": {
+              "Ref": "Collection"
+            },
+            "BUSINESS_TZ": {
+              "Ref": "BusinessTimezone"
+            },
+            "PORTAL_URL": {
+              "Fn::Sub": "https://${CDN.DomainName}"
+            }
+          }
+        },
+        "Events": {
+          "Tick": {
+            "Type": "Schedule",
+            "Properties": {
+              "Schedule": "rate(5 minutes)"
+            }
+          }
+        }
+      },
+      "DependsOn": "CleanupLogs"
+    },
+    "ScheduleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "invoke-reports",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:InvokeFunction"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Report",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:SendMessage"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "DeadLetters",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "DailySchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-daily"
+        },
+        "ScheduleExpression": "cron(59 23 * * ? *)",
+        "ScheduleExpressionTimezone": {
+          "Ref": "BusinessTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "Report",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "ScheduleRole",
+              "Arn"
+            ]
+          },
+          "Input": "{\"mode\": \"daily\"}",
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 2,
+            "MaximumEventAgeInSeconds": 3600
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ReconcileSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-reconcile"
+        },
+        "ScheduleExpression": "cron(10 0 * * ? *)",
+        "ScheduleExpressionTimezone": {
+          "Ref": "BusinessTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "Report",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "ScheduleRole",
+              "Arn"
+            ]
+          },
+          "Input": "{\"mode\": \"daily\", \"days_ago\": 1}",
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 2,
+            "MaximumEventAgeInSeconds": 3600
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "WeeklySchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-weekly"
+        },
+        "ScheduleExpression": "cron(0 1 ? * MON *)",
+        "ScheduleExpressionTimezone": {
+          "Ref": "BusinessTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "Report",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "ScheduleRole",
+              "Arn"
+            ]
+          },
+          "Input": "{\"mode\": \"weekly\"}",
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 2,
+            "MaximumEventAgeInSeconds": 3600
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ReportInvokeConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Report"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 2,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Alerts": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [
+          {
+            "Protocol": "email",
+            "Endpoint": {
+              "Ref": "AdminEmail"
+            }
+          }
+        ]
+      }
+    },
+    "RecognitionErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Recognition"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "CleanupErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Cleanup"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "ReportErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Report"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "ApiFunctionErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "ApiFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "QueueAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "ApiUrl": {
+      "Value": {
+        "Fn::Sub": "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod"
+      }
+    },
+    "PortalUrl": {
+      "Value": {
+        "Fn::Sub": "https://${CDN.DomainName}"
+      }
+    },
+    "UserPoolId": {
+      "Value": {
+        "Ref": "Pool"
+      }
+    },
+    "ClientId": {
+      "Value": {
+        "Ref": "Client"
+      }
+    },
+    "WebBucket": {
+      "Value": {
+        "Ref": "Web"
+      }
+    },
+    "RawBucket": {
+      "Value": {
+        "Ref": "Raw"
+      }
+    },
+    "ReportBucket": {
+      "Value": {
+        "Ref": "Reports"
+      }
+    },
+    "DistributionId": {
+      "Value": {
+        "Ref": "CDN"
+      }
+    },
+    "CollectionId": {
+      "Value": {
+        "Ref": "Collection"
+      }
+    },
+    "Region": {
+      "Value": {
+        "Ref": "AWS::Region"
+      }
+    },
+    "ReportFunction": {
+      "Value": {
+        "Ref": "Report"
+      }
+    },
+    "CleanupFunction": {
+      "Value": {
+        "Ref": "Cleanup"
+      }
+    },
+    "DeadLetterQueueUrl": {
+      "Value": {
+        "Ref": "DeadLetters"
+      }
+    },
+    "EmployeesTable": {
+      "Value": {
+        "Ref": "Employees"
+      }
+    },
+    "AttendanceTable": {
+      "Value": {
+        "Ref": "Attendance"
+      }
+    },
+    "SessionsTable": {
+      "Value": {
+        "Ref": "Sessions"
+      }
+    },
+    "ConfigTable": {
+      "Value": {
+        "Ref": "Config"
+      }
+    },
+    "AuditTable": {
+      "Value": {
+        "Ref": "Audit"
+      }
+    }
+  }
+}

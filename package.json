@@ -1,0 +1,13 @@
+{
+  "name": "attendflow-local-checks",
+  "private": true,
+  "scripts": {
+    "test:frontend": "node tests/frontend-smoke.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
