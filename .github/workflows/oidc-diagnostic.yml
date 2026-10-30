@@ -1,0 +1,103 @@
+name: AttendFlow OIDC diagnostic
+
+on:
+  push:
+    branches: [production-hardening]
+    paths:
+      - ".github/workflows/oidc-diagnostic.yml"
+
+permissions: {}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    env:
+      DEPLOY_ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+    steps:
+      - name: Check OIDC and AWS STS
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import xml.etree.ElementTree as ET
+
+          def main():
+              expected = "arn:aws:iam::614020738090:role/GitHubAttendFlowDeploy"
+              role = os.environ.get("DEPLOY_ROLE", "")
+              print("Configured role:", repr(role), flush=True)
+              if role != expected:
+                  raise SystemExit("AWS_DEPLOY_ROLE_ARN does not match the expected role.")
+
+              url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+              separator = "&" if "?" in url else "?"
+              request = urllib.request.Request(
+                  url + separator + "audience=sts.amazonaws.com",
+                  headers={
+                      "Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  token = json.load(response)["value"]
+
+              print("::add-mask::" + token, flush=True)
+
+              def decode(segment):
+                  return json.loads(base64.urlsafe_b64decode(
+                      segment + "=" * (-len(segment) % 4)
+                  ))
+
+              header, claims = [decode(part) for part in token.split(".")[:2]]
+              print("Token metadata (not a signature verification):")
+              print(json.dumps({
+                  key: claims.get(key)
+                  for key in ("iss", "aud", "sub", "iat", "nbf", "exp")
+              }, indent=2))
+              print("Algorithm:", header.get("alg"))
+              print("Key ID:", header.get("kid"))
+              print("Runner UTC epoch:", int(time.time()), flush=True)
+
+              payload = urllib.parse.urlencode({
+                  "Action": "AssumeRoleWithWebIdentity",
+                  "Version": "2011-06-15",
+                  "RoleArn": role,
+                  "RoleSessionName": "attendflow-oidc-diagnostic",
+                  "DurationSeconds": "900",
+                  "WebIdentityToken": token,
+              }).encode()
+
+              request = urllib.request.Request(
+                  "https://sts.us-east-1.amazonaws.com/",
+                  data=payload,
+                  headers={"Content-Type": "application/x-www-form-urlencoded"},
+              )
+
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      root = ET.fromstring(response.read())
+                  print("STS SUCCESS:", root.findtext(".//{*}AssumedRoleUser/{*}Arn"))
+              except urllib.error.HTTPError as error:
+                  root = ET.fromstring(error.read())
+                  result = {
+                      "HTTP": error.code,
+                      "Code": root.findtext(".//{*}Code"),
+                      "Message": root.findtext(".//{*}Message"),
+                      "RequestId": root.findtext(".//{*}RequestId"),
+                  }
+                  print(json.dumps(result, indent=2).replace(token, "[REDACTED]"))
+                  raise SystemExit(1)
+
+          try:
+              main()
+          except Exception as error:
+              print("Diagnostic could not finish:", type(error).__name__)
+              raise SystemExit(1)
+          PY
