@@ -340,6 +340,21 @@ def attendance_put(row, old):
         return put_op('attendance',row,'#v = :v',{':v':old['version']},{'#v':'version'})
     return put_op('attendance',row,'attribute_not_exists(employee_id)')
 
+
+# HARDENING_RECOGNITION_LOGGING_V1
+def log_capture_outcome(job, outcome, reason):
+    mode = job.get("mode")
+    action = job.get("action")
+    log.info(json.dumps({
+        "event": "capture_outcome",
+        "schema_version": 1,
+        "session_id": job["session_id"],
+        "mode": mode if mode in ("enroll", "attendance") else "other",
+        "action": action if action in ("in", "out") else "other",
+        "outcome": outcome,
+        "reason": reason,
+    }, separators=(",", ":")))
+
 def finish_op(job, state, result=None, error=None):
     item=dict(job); item.update(state=state,completed_at=iso(utcnow()))
     if result is not None: item['result']=result
@@ -360,6 +375,7 @@ def record(job,employee,stamp):
         try:
             transaction([attendance_put(row,old),emp_guard(current),finish_op(job,'DONE',result),
                 audit_op(current['employee_id'],job['owner'],'clock_'+job['action'],old,row,event_id=job['session_id'])])
+            log_capture_outcome(job, 'DONE', 'attendance_committed')
             return
         except ClientError as exc:
             latest=get('sessions',{'session_id':job['session_id']})
@@ -383,6 +399,7 @@ def process_object(bucket,key,version):
     sid=key.split('/')[1]
     job=get('sessions',{'session_id':sid})
     enrollment_lock = False
+    rejection_stage = 'image_validation'
     try:
         if not job or job['key']!=key or job['state'] in TERMINAL:
             return
@@ -405,7 +422,9 @@ def process_object(bucket,key,version):
             obj=client('s3').get_object(Bucket=bucket,Key=key,VersionId=version)
         except ClientError as exc:
             if exc.response['Error']['Code'] in ('NoSuchKey','NoSuchVersion'):
-                transaction([finish_op(job,'EXPIRED',error='Image expired; capture again.')]); return
+                transaction([finish_op(job,'EXPIRED',error='Image expired; capture again.')])
+                log_capture_outcome(job, 'EXPIRED', 'image_missing')
+                return
             raise
         if obj['ContentLength']>MAX_IMAGE:
             raise RuleError('Image is too large.')
@@ -419,8 +438,10 @@ def process_object(bucket,key,version):
         stamp=uploaded
         rek=client('rekognition')
         details=rek.detect_faces(Image={'Bytes':image},Attributes=['DEFAULT'])['FaceDetails']
+        rejection_stage = 'face_validation'
         validate_face(details)
         if job['mode']=='enroll':
+            rejection_stage = 'enrollment_rules'
             table('config').update_item(Key={'config_id':'enrollment_lock'},
                 UpdateExpression='SET lock_owner = :o, lock_until = :u',
                 ConditionExpression='attribute_not_exists(lock_until) OR lock_until < :now',
@@ -442,21 +463,27 @@ def process_object(bucket,key,version):
             transaction([put_op('employees',e,'#v = :v AND active = :yes',{':v':before['version'],':yes':True},{'#v':'version'}),
                          finish_op(job,'DONE',{'employee_id':e['employee_id'],'name':e['name'],'message':'Enrollment complete.'}),
                          audit_op(e['employee_id'],job['owner'],'enroll',before,e,event_id=sid)])
+            log_capture_outcome(job, 'DONE', 'enrollment_committed')
         else:
             matches=rek.search_faces_by_image(CollectionId=os.environ['COLLECTION_ID'],Image={'Bytes':image},FaceMatchThreshold=98,MaxFaces=5)['FaceMatches']
+            rejection_stage = 'face_match'
             best=choose_match(matches,int(config()['similarity']))
+            rejection_stage = 'enrollment_lookup'
             e=get('employees',{'employee_id':best['Face'].get('ExternalImageId','')})
             if not e or e.get('face_id')!=best['Face']['FaceId']:
                 raise RuleError('Face has no active enrollment. Ask an administrator.')
+            rejection_stage = 'attendance_rules'
             record(job,e,stamp)
     except ClientError as exc:
         if exc.response['Error']['Code'] in ('InvalidImageFormatException', 'ImageTooLargeException') and job and job.get('lease_owner'):
             transaction([finish_op(job,'REJECTED',error='Invalid or oversized image. Retake a JPEG/PNG photo.')])
+            log_capture_outcome(job, 'REJECTED', 'invalid_image')
         else:
             raise
     except RuleError as exc:
         if job and job.get('lease_owner'):
             transaction([finish_op(job,'REJECTED',error=str(exc))])
+            log_capture_outcome(job, 'REJECTED', rejection_stage)
         else: raise
     finally:
         if enrollment_lock:

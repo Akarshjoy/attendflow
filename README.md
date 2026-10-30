@@ -99,3 +99,6 @@ Use a consenting demonstration group. A still photograph can spoof matching; liv
 production privacy governance, payroll integration, shifts, PTO integration and multi-region
 operation are outside this version. Review any match error with a human before changing
 an employee’s attendance or making an employment decision.
+
+
+[![AttendFlow CI-CD](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml/badge.svg?branch=production-hardening)](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml)

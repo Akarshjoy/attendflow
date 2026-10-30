@@ -116,3 +116,31 @@ t={'AWSTemplateFormatVersion':'2010-09-09','Transform':'AWS::Serverless-2016-10-
    'Resources':R,'Outputs':{k:{'Value':v} for k,v in outputs.items()}}
 (ROOT/'template.json').write_text(json.dumps(t,indent=2)+'\n')
 print('Generated template.json. Runtime: python3.14. No AWS resources were created.')
+
+# HARDENING_TRACING_HOOK
+from pathlib import Path
+import runpy as _hardening_runpy
+_hardening_runpy.run_path(str(Path(__file__).resolve().with_name("apply_tracing.py")))
+
+# HARDENING_ROLE_SCOPES_HOOK
+import runpy as _role_runpy
+from pathlib import Path
+_role_runpy.run_path(str(Path(__file__).resolve().with_name("apply_role_scopes.py")))
+
+
+# HARDENING_MONITORING_HOOK
+import runpy as _monitoring_runpy
+from pathlib import Path
+_monitoring_runpy.run_path(str(Path(__file__).resolve().with_name("apply_monitoring.py")))
+
+
+# HARDENING_SCHEDULER_SCOPE_HOOK
+import runpy as _scheduler_scope_runpy
+from pathlib import Path
+_scheduler_scope_runpy.run_path(str(Path(__file__).resolve().with_name("apply_scheduler_scope.py")))
+
+
+# HARDENING_STORAGE_PROTECTION_HOOK
+import runpy as _storage_protection_runpy
+from pathlib import Path
+_storage_protection_runpy.run_path(str(Path(__file__).resolve().with_name("apply_storage_protection.py")))

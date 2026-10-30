@@ -40,7 +40,8 @@
         },
         "PointInTimeRecoverySpecification": {
           "PointInTimeRecoveryEnabled": true
-        }
+        },
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -74,7 +75,8 @@
         },
         "PointInTimeRecoverySpecification": {
           "PointInTimeRecoveryEnabled": true
-        }
+        },
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -104,7 +106,8 @@
         "TimeToLiveSpecification": {
           "AttributeName": "ttl",
           "Enabled": true
-        }
+        },
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -130,7 +133,8 @@
         },
         "PointInTimeRecoverySpecification": {
           "PointInTimeRecoveryEnabled": true
-        }
+        },
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -156,7 +160,8 @@
         },
         "PointInTimeRecoverySpecification": {
           "PointInTimeRecoveryEnabled": true
-        }
+        },
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -745,7 +750,8 @@
               }
             }
           }
-        }
+        },
+        "TracingEnabled": true
       }
     },
     "ReportLogs": {
@@ -854,6 +860,22 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "HardeningTraceWrite",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
           }
         ]
       }
@@ -914,7 +936,8 @@
               "Fn::Sub": "https://${CDN.DomainName}"
             }
           }
-        }
+        },
+        "Tracing": "Active"
       },
       "DependsOn": "ReportLogs"
     },
@@ -1087,6 +1110,22 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "HardeningTraceWrite",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
           }
         ]
       }
@@ -1162,7 +1201,8 @@
               "Method": "ANY"
             }
           }
-        }
+        },
+        "Tracing": "Active"
       },
       "DependsOn": "ApiFunctionLogs"
     },
@@ -1326,6 +1366,22 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "HardeningTraceWrite",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
           }
         ]
       }
@@ -1403,7 +1459,8 @@
               ]
             }
           }
-        }
+        },
+        "Tracing": "Active"
       },
       "DependsOn": "RecognitionLogs"
     },
@@ -1534,6 +1591,22 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "HardeningTraceWrite",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
           }
         ]
       }
@@ -1602,7 +1675,8 @@
               "Schedule": "rate(5 minutes)"
             }
           }
-        }
+        },
+        "Tracing": "Active"
       },
       "DependsOn": "CleanupLogs"
     },
@@ -1622,6 +1696,11 @@
                 "StringEquals": {
                   "aws:SourceAccount": {
                     "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default"
                   }
                 }
               }
@@ -1955,6 +2034,429 @@
           }
         ]
       }
+    },
+    "ApiFunctionErrorRateAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "ApiFunction: Lambda execution errors exceed 5% of invocations in a five-minute period.",
+        "Threshold": 5,
+        "Metrics": [
+          {
+            "Id": "errors",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "ApiFunction"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "invocations",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Invocations",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "ApiFunction"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "rate",
+            "Expression": "IF(invocations>0,100*errors/invocations,0)",
+            "Label": "Lambda error rate (%)",
+            "ReturnData": true
+          }
+        ]
+      }
+    },
+    "ApiFunctionP95LatencyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "ApiFunction: Lambda execution P95 exceeds 3000 ms in a five-minute period. Not end-to-end latency.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Duration",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "ApiFunction"
+            }
+          }
+        ],
+        "ExtendedStatistic": "p95",
+        "Period": 300,
+        "Threshold": 3000,
+        "EvaluateLowSampleCountPercentile": "evaluate"
+      }
+    },
+    "RecognitionErrorRateAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Recognition: Lambda execution errors exceed 5% of invocations in a five-minute period.",
+        "Threshold": 5,
+        "Metrics": [
+          {
+            "Id": "errors",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Recognition"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "invocations",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Invocations",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Recognition"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "rate",
+            "Expression": "IF(invocations>0,100*errors/invocations,0)",
+            "Label": "Lambda error rate (%)",
+            "ReturnData": true
+          }
+        ]
+      }
+    },
+    "RecognitionP95LatencyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Recognition: Lambda execution P95 exceeds 3000 ms in a five-minute period. Not end-to-end latency.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Duration",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Recognition"
+            }
+          }
+        ],
+        "ExtendedStatistic": "p95",
+        "Period": 300,
+        "Threshold": 3000,
+        "EvaluateLowSampleCountPercentile": "evaluate"
+      }
+    },
+    "CleanupErrorRateAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Cleanup: Lambda execution errors exceed 5% of invocations in a five-minute period.",
+        "Threshold": 5,
+        "Metrics": [
+          {
+            "Id": "errors",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Cleanup"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "invocations",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Invocations",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Cleanup"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "rate",
+            "Expression": "IF(invocations>0,100*errors/invocations,0)",
+            "Label": "Lambda error rate (%)",
+            "ReturnData": true
+          }
+        ]
+      }
+    },
+    "CleanupP95LatencyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Cleanup: Lambda execution P95 exceeds 3000 ms in a five-minute period. Not end-to-end latency.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Duration",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Cleanup"
+            }
+          }
+        ],
+        "ExtendedStatistic": "p95",
+        "Period": 300,
+        "Threshold": 3000,
+        "EvaluateLowSampleCountPercentile": "evaluate"
+      }
+    },
+    "ReportErrorRateAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Report: Lambda execution errors exceed 5% of invocations in a five-minute period.",
+        "Threshold": 5,
+        "Metrics": [
+          {
+            "Id": "errors",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Report"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "invocations",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Invocations",
+                "Dimensions": [
+                  {
+                    "Name": "FunctionName",
+                    "Value": {
+                      "Ref": "Report"
+                    }
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "rate",
+            "Expression": "IF(invocations>0,100*errors/invocations,0)",
+            "Label": "Lambda error rate (%)",
+            "ReturnData": true
+          }
+        ]
+      }
+    },
+    "ReportP95LatencyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ComparisonOperator": "GreaterThanThreshold",
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "AlarmDescription": "Report: Lambda execution P95 exceeds 3000 ms in a five-minute period. Not end-to-end latency.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Duration",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Report"
+            }
+          }
+        ],
+        "ExtendedStatistic": "p95",
+        "Period": 300,
+        "Threshold": 3000,
+        "EvaluateLowSampleCountPercentile": "evaluate"
+      }
+    },
+    "OperationsDashboard": {
+      "Type": "AWS::CloudWatch::Dashboard",
+      "Properties": {
+        "DashboardName": {
+          "Fn::Sub": "${AWS::StackName}-${AWS::Region}-operations"
+        },
+        "DashboardBody": {
+          "Fn::Sub": "{\"start\": \"-PT6H\", \"periodOverride\": \"inherit\", \"widgets\": [{\"type\": \"text\", \"x\": 0, \"y\": 0, \"width\": 24, \"height\": 3, \"properties\": {\"markdown\": \"# AttendFlow operational dashboard\\nFive-minute periods; one series per Lambda. Error rate = 100 x execution errors / invocations. P95 measures Lambda execution duration, not the complete camera-to-result journey. Expected face rejections and handled API errors require separate application logging. Missing data is not proof of health.\"}}, {\"type\": \"metric\", \"x\": 0, \"y\": 3, \"width\": 8, \"height\": 7, \"properties\": {\"title\": \"Invocations per 5 minutes\", \"view\": \"timeSeries\", \"region\": \"${AWS::Region}\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${ApiFunction}\", {\"label\": \"ApiFunction\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Recognition}\", {\"label\": \"Recognition\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Cleanup}\", {\"label\": \"Cleanup\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Report}\", {\"label\": \"Report\"}]], \"stacked\": false, \"yAxis\": {\"left\": {\"min\": 0, \"label\": \"Invocations\", \"showUnits\": false}}}}, {\"type\": \"metric\", \"x\": 8, \"y\": 3, \"width\": 8, \"height\": 7, \"properties\": {\"title\": \"Lambda execution error rate (%)\", \"view\": \"timeSeries\", \"region\": \"${AWS::Region}\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"${ApiFunction}\", {\"id\": \"e0\", \"visible\": false, \"stat\": \"Sum\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${ApiFunction}\", {\"id\": \"i0\", \"visible\": false, \"stat\": \"Sum\"}], [{\"id\": \"r0\", \"expression\": \"IF(i0>0,100*e0/i0,0)\", \"label\": \"ApiFunction\"}], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"${Recognition}\", {\"id\": \"e1\", \"visible\": false, \"stat\": \"Sum\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Recognition}\", {\"id\": \"i1\", \"visible\": false, \"stat\": \"Sum\"}], [{\"id\": \"r1\", \"expression\": \"IF(i1>0,100*e1/i1,0)\", \"label\": \"Recognition\"}], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"${Cleanup}\", {\"id\": \"e2\", \"visible\": false, \"stat\": \"Sum\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Cleanup}\", {\"id\": \"i2\", \"visible\": false, \"stat\": \"Sum\"}], [{\"id\": \"r2\", \"expression\": \"IF(i2>0,100*e2/i2,0)\", \"label\": \"Cleanup\"}], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"${Report}\", {\"id\": \"e3\", \"visible\": false, \"stat\": \"Sum\"}], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"${Report}\", {\"id\": \"i3\", \"visible\": false, \"stat\": \"Sum\"}], [{\"id\": \"r3\", \"expression\": \"IF(i3>0,100*e3/i3,0)\", \"label\": \"Report\"}]], \"stacked\": false, \"yAxis\": {\"left\": {\"min\": 0, \"label\": \"Percent\", \"showUnits\": false}}, \"annotations\": {\"horizontal\": [{\"label\": \"Alarm threshold\", \"value\": 5}]}}}, {\"type\": \"metric\", \"x\": 16, \"y\": 3, \"width\": 8, \"height\": 7, \"properties\": {\"title\": \"Lambda execution P95 duration (ms)\", \"view\": \"timeSeries\", \"region\": \"${AWS::Region}\", \"period\": 300, \"stat\": \"p95\", \"metrics\": [[\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"${ApiFunction}\", {\"label\": \"ApiFunction\"}], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"${Recognition}\", {\"label\": \"Recognition\"}], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"${Cleanup}\", {\"label\": \"Cleanup\"}], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"${Report}\", {\"label\": \"Report\"}]], \"stacked\": false, \"yAxis\": {\"left\": {\"min\": 0, \"label\": \"Milliseconds\", \"showUnits\": false}}, \"annotations\": {\"horizontal\": [{\"label\": \"Alarm threshold\", \"value\": 3000}]}}}]}"
+        }
+      }
     }
   },
   "Outputs": {
@@ -2046,6 +2548,11 @@
     "AuditTable": {
       "Value": {
         "Ref": "Audit"
+      }
+    },
+    "OperationsDashboardName": {
+      "Value": {
+        "Ref": "OperationsDashboard"
       }
     }
   }

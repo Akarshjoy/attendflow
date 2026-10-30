@@ -1,0 +1,125 @@
+name: AttendFlow CI-CD
+
+on:
+  push:
+    branches: [main, master, production-hardening]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the tested SAM build to AttendFlow
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_EC2_METADATA_DISABLED: "true"
+  SAM_CLI_TELEMETRY: "0"
+
+jobs:
+  checks:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          version: "1.166.2"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          npm ci
+
+      - name: Generate, validate and build
+        run: |
+          python scripts/build_template.py
+          sam validate --lint --template-file template.json
+          sam build --template-file template.json
+
+      - name: Backend tests
+        run: python -m pytest tests -q --tb=short
+
+      - name: Frontend tests
+        run: npm run test:frontend
+
+      - name: Archive successful build
+        run: tar -czf attendflow-build.tgz -C .aws-sam build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: attendflow-build-${{ github.sha }}
+          path: attendflow-build.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy tested SAM build
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/production-hardening'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: attendflow-production-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          version: "1.166.2"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: attendflow-build-${{ github.sha }}
+          path: deployment-artifact
+
+      - name: Restore tested build
+        run: |
+          mkdir -p .aws-sam
+          tar -xzf deployment-artifact/attendflow-build.tgz -C .aws-sam
+
+      - name: Check deployment configuration
+        env:
+          DEPLOY_ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$DEPLOY_ROLE" ]; then
+            echo "::error::Configure the AWS_DEPLOY_ROLE_ARN repository variable first."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: "614020738090"
+          role-session-name: attendflow-${{ github.run_id }}
+
+      - name: Deploy using existing stack parameters
+        run: python scripts/ci_deploy.py
