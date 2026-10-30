@@ -123,3 +123,50 @@ jobs:
 
       - name: Deploy using existing stack parameters
         run: python scripts/ci_deploy.py
+
+  oidc_identity:
+    name: Inspect deployment identity
+    needs: checks
+    if: github.ref == 'refs/heads/production-hardening' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Print selected identity metadata
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          separator = "&" if "?" in url else "?"
+          request = urllib.request.Request(
+              url + separator + "audience=sts.amazonaws.com",
+              headers={
+                  "Authorization":
+                      "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              token = json.load(response)["value"]
+
+          encoded = token.split(".")[1]
+          claims = json.loads(
+              base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+          )
+          selected = {
+              key: claims.get(key)
+              for key in (
+                  "aud", "sub", "repository", "repository_id",
+                  "repository_owner_id", "ref", "job_workflow_ref"
+              )
+          }
+          result = json.dumps(selected, indent=2)
+          print(result)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("### Deployment identity\n```json\n" + result + "\n```\n")
+          PY
