@@ -102,3 +102,9 @@ an employee’s attendance or making an employment decision.
 
 
 [![AttendFlow CI-CD](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml/badge.svg?branch=production-hardening)](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml)
+
+
+<!-- ATTENDFLOW_DEPLOY_TRIGGER -->
+### Requesting deployment
+
+Pushes run the build and tests. On `production-hardening`, a commit message beginning with `[deploy-attendflow]` also requests deployment of the tested SAM artifact. Deployment depends on the checks job succeeding. Manual dispatch with `deploy=true` is also supported when available.

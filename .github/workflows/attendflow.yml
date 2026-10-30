@@ -73,7 +73,7 @@ jobs:
   deploy:
     name: Deploy tested SAM build
     needs: checks
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/production-hardening'
+    if: "github.ref == 'refs/heads/production-hardening' && ((github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[deploy-attendflow]')))"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     concurrency:
