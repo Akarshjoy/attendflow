@@ -727,8 +727,8 @@
           {
             "ResourcePath": "/*",
             "HttpMethod": "*",
-            "ThrottlingRateLimit": 10,
-            "ThrottlingBurstLimit": 20
+            "ThrottlingRateLimit": 50,
+            "ThrottlingBurstLimit": 100
           }
         ],
         "GatewayResponses": {

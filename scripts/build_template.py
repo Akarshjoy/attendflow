@@ -144,3 +144,9 @@ _scheduler_scope_runpy.run_path(str(Path(__file__).resolve().with_name("apply_sc
 import runpy as _storage_protection_runpy
 from pathlib import Path
 _storage_protection_runpy.run_path(str(Path(__file__).resolve().with_name("apply_storage_protection.py")))
+
+
+# HARDENING_API_CAPACITY_HOOK
+import runpy as _api_capacity_runpy
+from pathlib import Path
+_api_capacity_runpy.run_path(str(Path(__file__).resolve().with_name("apply_api_capacity.py")))
