@@ -65,3 +65,45 @@ the browser binary was unavailable. Browser camera/HTTPS/CORS behavior remains a
 
 The app is a deployable demonstration implementation, not a certified biometric or payroll product.
 A generated architecture or passing unit suite is not evidence that a real employee was recognized.
+
+<!-- LIVE_HARDENING_VALIDATION_20261031 -->
+
+## Hardening verification update — 31 October 2026
+
+This update supplements the original 16 October local validation record.
+
+Verified during the hardening session:
+
+- Local Python 3.14 suite: 54 tests passed after CI demonstration cleanup.
+- GitHub Actions completed a successful build/test/deployment workflow.
+- API stage throttle settings verified live: 50 requests/second, burst 100.
+- Authenticated GET /me load test: 50 virtual users, 2,340 HTTP 200
+  responses, no reported failures, reported throughput 39 requests/second.
+  P95 301.9 ms; P99 320.6 ms. This is not a recognition workload test.
+- Missing and invalid authentication tokens were rejected with HTTP 401.
+- All five DynamoDB tables were ACTIVE with encryption, PITR and
+  deletion protection enabled.
+- All three application buckets had encryption, versioning and all four
+  public-access-block settings enabled.
+- Scheduler trust was verified live with SourceAccount and the exact
+  regional default schedule-group SourceArn.
+- SNS email delivery was confirmed after a simulated alarm transition.
+- Recognition emitted a real capture_outcome rejection with
+  reason face_validation; this does not demonstrate successful matching.
+- Commit ad4772c deliberately failed one backend test while 54 passed.
+  Deployment was skipped despite the deployment-triggering commit message.
+- Commit 6d999a5 removed that temporary test and saved gate evidence.
+
+Latest documentation commit: 6641298.
+GitHub CI passed for commits 6641298 and 6d999a5, verified from the Actions run list.
+
+Still outstanding or not established by the evidence above:
+
+- Complete recognition/report and SDK dependency trace coverage. API Gateway-to-Lambda and Cleanup graph nodes were observed.
+
+- Successful recognition and the remaining original live acceptance gates,
+  except where explicitly verified above.
+- Measured before/after cost savings; current figures are planning estimates.
+
+See operations-runbook.md, hardening-load-test.md,
+hardening-cost-estimate.md and ci-deployment-gate.md.

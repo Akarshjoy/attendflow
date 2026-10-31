@@ -108,3 +108,26 @@ an employee’s attendance or making an employment decision.
 ### Requesting deployment
 
 Pushes run the build and tests. On `production-hardening`, a commit message beginning with `[deploy-attendflow]` also requests deployment of the tested SAM artifact. Deployment depends on the checks job succeeding. Manual dispatch with `deploy=true` is also supported when available.
+
+<!-- ATTENDFLOW_HARDENING_EVIDENCE -->
+
+## Production hardening evidence
+
+[![AttendFlow CI-CD](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml/badge.svg?branch=production-hardening)](https://github.com/Akarshjoy/attendflow/actions/workflows/attendflow.yml)
+
+- [Operations runbook](docs/operations-runbook.md)
+- [Load-test results and capacity limits](docs/hardening-load-test.md)
+- [Cost assumptions and planning estimates](docs/hardening-cost-estimate.md)
+- [Verified failed-test deployment gate](docs/ci-deployment-gate.md)
+- [Security and retention design](docs/security-and-retention.md)
+
+The authenticated GET /me load test completed 2,340 requests with
+HTTP 200 responses and no reported failures across 50 virtual users.
+Reported throughput was 39 requests/second; P95 was 301.9 ms.
+
+This test covers GET /me only. Recognition, reporting and database
+capacity require separate workload evidence. Cost figures are planning
+estimates; measured cost savings have not been established.
+
+- [Trusted Advisor review](docs/trusted-advisor-review.md)
+- [Observed tracing coverage](docs/tracing-evidence.md)
