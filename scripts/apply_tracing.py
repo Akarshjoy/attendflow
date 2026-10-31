@@ -14,6 +14,33 @@ for name, resource in resources.items():
     if resource["Type"] != "AWS::Serverless::Function":
         continue
     props["Tracing"] = "Active"
+
+    # ATTENDFLOW_ADOT_SDK_TRACING
+    if name in {"ApiFunction", "Recognition", "Cleanup", "Report"}:
+        if props.get("Runtime") != "python3.14":
+            raise ValueError(f"Review runtime compatibility for {name}")
+
+        layer = (
+            "arn:aws:lambda:us-east-1:615299751070:"
+            "layer:AWSOpenTelemetryDistroPython:32"
+        )
+        layers = props.setdefault("Layers", [])
+        if layer not in layers:
+            if len(layers) >= 5:
+                raise ValueError(f"Lambda layer limit reached for {name}")
+            layers.append(layer)
+
+        variables = props.setdefault("Environment", {}).setdefault("Variables", {})
+        settings = {
+            "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "false",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none",
+        }
+        for key, value in settings.items():
+            if key in variables and variables[key] != value:
+                raise ValueError(f"Conflicting {key} setting for {name}")
+            variables[key] = value
     count += 1
     role = props.get("Role")
     if role is None:

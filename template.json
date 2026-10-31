@@ -934,10 +934,17 @@
             },
             "PORTAL_URL": {
               "Fn::Sub": "https://${CDN.DomainName}"
-            }
+            },
+            "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "false",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none"
           }
         },
-        "Tracing": "Active"
+        "Tracing": "Active",
+        "Layers": [
+          "arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:32"
+        ]
       },
       "DependsOn": "ReportLogs"
     },
@@ -1187,7 +1194,11 @@
             },
             "REPORT_FUNCTION": {
               "Ref": "Report"
-            }
+            },
+            "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "false",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none"
           }
         },
         "Events": {
@@ -1202,7 +1213,10 @@
             }
           }
         },
-        "Tracing": "Active"
+        "Tracing": "Active",
+        "Layers": [
+          "arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:32"
+        ]
       },
       "DependsOn": "ApiFunctionLogs"
     },
@@ -1440,7 +1454,11 @@
             },
             "PORTAL_URL": {
               "Fn::Sub": "https://${CDN.DomainName}"
-            }
+            },
+            "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "false",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none"
           }
         },
         "Events": {
@@ -1460,7 +1478,10 @@
             }
           }
         },
-        "Tracing": "Active"
+        "Tracing": "Active",
+        "Layers": [
+          "arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:32"
+        ]
       },
       "DependsOn": "RecognitionLogs"
     },
@@ -1665,7 +1686,11 @@
             },
             "PORTAL_URL": {
               "Fn::Sub": "https://${CDN.DomainName}"
-            }
+            },
+            "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "false",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none"
           }
         },
         "Events": {
@@ -1676,7 +1701,10 @@
             }
           }
         },
-        "Tracing": "Active"
+        "Tracing": "Active",
+        "Layers": [
+          "arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:32"
+        ]
       },
       "DependsOn": "CleanupLogs"
     },
