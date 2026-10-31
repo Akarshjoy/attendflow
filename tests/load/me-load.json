@@ -1,0 +1,40 @@
+{
+  "config": {
+    "target": "https://q1rlpbov3j.execute-api.us-east-1.amazonaws.com/prod",
+    "processor": "./me-load.cjs",
+    "http": {
+      "timeout": 5
+    },
+    "phases": [
+      {
+        "name": "Start 50 users",
+        "duration": 1,
+        "arrivalCount": 50,
+        "maxVusers": 50
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "Authenticated GET /me",
+      "beforeScenario": "startUser",
+      "flow": [
+        {
+          "loop": [
+            {
+              "get": {
+                "url": "/me",
+                "beforeRequest": "attachToken",
+                "afterResponse": "checkStatus"
+              }
+            },
+            {
+              "think": 1
+            }
+          ],
+          "whileTrue": "keepRunning"
+        }
+      ]
+    }
+  ]
+}

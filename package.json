@@ -5,6 +5,7 @@
     "test:frontend": "node tests/frontend-smoke.cjs"
   },
   "devDependencies": {
+    "artillery": "^2.0.34",
     "jsdom": "30.1.3"
   },
   "engines": {
